@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Receipts">
+<meta name="theme-color" content="#1f6f4a">
+<title>Receipt Helper</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 id="title">Receipts</h1>
+</header>
+
+<main>
+  <!-- RECEIPTS TAB -->
+  <section id="tab-receipts" class="tab active">
+    <div id="pending-summary" class="summary"></div>
+    <div id="pending-list" class="list"></div>
+    <details id="submitted-wrap" class="submitted">
+      <summary>Submitted receipts <span id="submitted-count"></span></summary>
+      <div id="submitted-list" class="list"></div>
+      <button class="btn danger small" id="btn-clear-submitted">Delete all submitted receipts</button>
+    </details>
+    <button class="fab" id="btn-add" aria-label="Add receipt">+</button>
+  </section>
+
+  <!-- MONTH-END TAB -->
+  <section id="tab-monthend" class="tab">
+    <div class="card">
+      <h2>Month-end report</h2>
+      <p class="muted">Open the spreadsheet AP emailed you. (In Mail, tap the attachment → Share → Save to Files first.)</p>
+      <label class="btn primary block">
+        Open AP spreadsheet…
+        <input type="file" id="ap-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+      </label>
+    </div>
+    <div id="match-area"></div>
+  </section>
+
+  <!-- SETTINGS TAB -->
+  <section id="tab-settings" class="tab">
+    <div class="card">
+      <h2>Cost codes</h2>
+      <div id="code-list" class="codes"></div>
+      <button class="btn block" id="btn-add-code">+ Add cost code</button>
+      <label class="btn block">
+        Import from Excel…
+        <input type="file" id="codes-file" accept=".xlsx" hidden>
+      </label>
+      <p class="muted small">Excel import reads column A as the name and column B as the code (row 1 is headers).</p>
+    </div>
+    <div class="card">
+      <h2>Report options</h2>
+      <label class="check"><input type="checkbox" id="opt-caption"> Print line #, date and amount at the top of each receipt page</label>
+      <label class="check"><input type="checkbox" id="opt-placeholder"> Add a "No receipt" page for lines without a receipt</label>
+    </div>
+    <div class="card">
+      <h2>Backup</h2>
+      <p class="muted small">Receipts are stored only on this phone. Make a backup now and then and save it to OneDrive.</p>
+      <button class="btn block" id="btn-backup">Save backup file</button>
+      <label class="btn block">
+        Restore from backup…
+        <input type="file" id="restore-file" accept=".zip,application/zip" hidden>
+      </label>
+      <p class="muted small" id="storage-info"></p>
+    </div>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <button data-tab="receipts" class="active"><span class="ico">🧾</span>Receipts</button>
+  <button data-tab="monthend"><span class="ico">📤</span>Month-end</button>
+  <button data-tab="settings"><span class="ico">⚙️</span>Settings</button>
+</nav>
+
+<!-- RECEIPT EDITOR -->
+<dialog id="editor">
+  <form id="editor-form" method="dialog">
+    <div class="dlg-head">
+      <button type="button" class="link" id="ed-cancel">Cancel</button>
+      <strong id="ed-title">New receipt</strong>
+      <button type="submit" class="link bold" id="ed-save">Save</button>
+    </div>
+    <div class="dlg-body">
+      <div id="ed-pages" class="pages"></div>
+      <label class="btn block">
+        <span id="ed-add-page-label">📷 Take photo / choose file</span>
+        <input type="file" id="ed-file" accept="image/*,application/pdf" hidden>
+      </label>
+
+      <label class="field">Amount
+        <input type="text" id="ed-amount" inputmode="decimal" placeholder="0.00" autocomplete="off" required>
+      </label>
+      <label class="field">Date
+        <input type="date" id="ed-date" required>
+      </label>
+      <label class="field">Vendor <span class="muted">(optional)</span>
+        <input type="text" id="ed-vendor" placeholder="e.g. Amazon" autocomplete="off">
+      </label>
+      <label class="field">Category
+        <select id="ed-category"></select>
+      </label>
+      <label class="field">Cost code
+        <select id="ed-code"></select>
+      </label>
+      <div id="ed-newcode" class="newcode" hidden>
+        <input type="text" id="ed-newcode-name" placeholder="Name (e.g. Brookings)">
+        <input type="text" id="ed-newcode-code" placeholder="Code (e.g. 110.6020.1990)" inputmode="decimal">
+        <p class="muted small">This code will be added to your list.</p>
+      </div>
+      <label class="field">Note (Guest / Purpose)
+        <textarea id="ed-note" rows="2" placeholder="What was it for?"></textarea>
+      </label>
+      <button type="button" class="btn danger block" id="ed-delete" hidden>Delete receipt</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- COST CODE EDITOR -->
+<dialog id="code-editor">
+  <form id="code-form" method="dialog">
+    <div class="dlg-head">
+      <button type="button" class="link" id="ce-cancel">Cancel</button>
+      <strong id="ce-title">Cost code</strong>
+      <button type="submit" class="link bold">Save</button>
+    </div>
+    <div class="dlg-body">
+      <label class="field">Name<input type="text" id="ce-name" required></label>
+      <label class="field">Code<input type="text" id="ce-code" required></label>
+      <button type="button" class="btn danger block" id="ce-delete">Delete cost code</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+<div id="busy" class="busy" hidden><div class="spinner"></div><div id="busy-msg">Working…</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="xlsx.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
