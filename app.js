@@ -120,6 +120,39 @@
     return normalizeImage(file);
   }
 
+  async function filesToPages(files) {
+    busy('Processing…');
+    try {
+      const pages = [];
+      for (const f of files) pages.push(await fileToPage(f));
+      return pages;
+    } catch (err) {
+      alert(err.message);
+      return [];
+    } finally { busy(); }
+  }
+  // Drag-and-drop files onto an element (computer only; harmless on phone)
+  function enableDrop(target, onFiles) {
+    target.addEventListener('dragover', e => {
+      if (!e.dataTransfer.types.includes('Files')) return;
+      e.preventDefault();
+      target.classList.add('dragover');
+    });
+    target.addEventListener('dragleave', e => {
+      if (!target.contains(e.relatedTarget)) target.classList.remove('dragover');
+    });
+    target.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      target.classList.remove('dragover');
+      const files = Array.from(e.dataTransfer.files || []);
+      if (files.length) onFiles(files);
+    });
+  }
+  // Dropping a file anywhere else shouldn't navigate away from the app
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+
   // thumbnails: object URLs cached per receipt page
   const urlCache = new WeakMap();
   function pageUrl(page) {
@@ -169,10 +202,21 @@
     const total = pending.reduce((s, r) => s + r.cents, 0);
     $('#pending-summary').textContent = pending.length
       ? `${pending.length} receipt${pending.length === 1 ? '' : 's'} waiting · ${fmtMoney(total)}` : '';
+    $('#btn-submit-all').hidden = !pending.length;
     $('#submitted-wrap').hidden = !submitted.length;
     $('#submitted-count').textContent = `(${submitted.length})`;
     $('#submitted-list').replaceChildren(...submitted.map(receiptCard));
   }
+  $('#btn-submit-all').addEventListener('click', async () => {
+    const pending = receipts.filter(r => !r.submittedAt);
+    if (!confirm(`Mark all ${pending.length} waiting receipt(s) as submitted?
+
+Use this after you've done month-end on your computer.`)) return;
+    const now = Date.now();
+    for (const r of pending) { r.submittedAt = now; await DB.put('receipts', r); }
+    renderReceipts();
+    toast('Marked as submitted');
+  });
   $('#btn-clear-submitted').addEventListener('click', async () => {
     const sub = receipts.filter(r => r.submittedAt);
     if (!confirm(`Permanently delete ${sub.length} submitted receipt(s) from this phone?`)) return;
@@ -214,7 +258,7 @@
 
   function openEditor(rec, prefill = {}, onSaved = null) {
     ed.id = rec ? rec.id : null;
-    ed.pages = rec ? [...rec.files] : [];
+    ed.pages = rec ? [...rec.files] : (prefill.pages || []);
     ed.onSaved = onSaved;
     const r = rec || {};
     $('#ed-title').textContent = rec ? 'Edit receipt' : 'New receipt';
@@ -239,18 +283,17 @@
     $('#ed-file').click();
   });
   $('#ed-cancel').addEventListener('click', () => editor.close());
-  $('#ed-file').addEventListener('change', async e => {
+  async function addEditorFiles(files) {
+    if (!files.length) return;
+    ed.pages.push(...await filesToPages(files));
+    renderPages();
+  }
+  $('#ed-file').addEventListener('change', e => {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!files.length) return;
-    busy('Processing…');
-    try {
-      for (const f of files) ed.pages.push(await fileToPage(f));
-      renderPages();
-    } catch (err) {
-      alert(err.message);
-    } finally { busy(); }
+    addEditorFiles(files);
   });
+  enableDrop(editor, addEditorFiles);
   $('#ed-category').addEventListener('change', () => {
     const cat = $('#ed-category').value;
     const pat = cat === 'Meals' ? /meal/i : (cat === 'Hotel' || cat === 'Airfare') ? /travel/i : null;
@@ -401,6 +444,8 @@
       const data = JSON.parse(await zip.file('data.json').async('string'));
       for (const r of data.receipts) {
         r.files = await Promise.all(r.files.map(async p => ({ type: p.type, data: await zip.file(p.name).async('arraybuffer') })));
+        const here = receipts.find(x => x.id === r.id);
+        if (here && here.submittedAt && !r.submittedAt) r.submittedAt = here.submittedAt;
         await DB.put('receipts', r);
       }
       for (const c of data.codes || []) if (!codes.some(x => x.code === c.code && x.name === c.name)) codes.push(c);
@@ -503,11 +548,7 @@
           const v = e.target.value;
           if (v === '__add') {
             e.target.value = rec ? rec.id : '';
-            openEditor(null, { cents: line.cents, date: line.date, vendor: shortPlace(line.place) }, saved => {
-              ap.assign.set(line.row, saved.id);
-              ap.status.set(line.row, 'manual');
-              renderMatch();
-            });
+            addForLine([]);
             return;
           }
           ap.assign.set(line.row, v || null);
@@ -533,14 +574,23 @@
           warn, `${rec.category} · ${rec.code ? codeLabel(rec.code) : 'NO COST CODE'} · ${rec.note || 'no note'} `,
           el('button', { class: 'link', onclick: () => openEditor(rec, {}, () => renderMatch()) }, 'Edit'));
       }
-      area.append(el('div', { class: 'mrow' },
+      const addForLine = pages => openEditor(null,
+        { cents: line.cents, date: line.date, vendor: shortPlace(line.place), pages }, saved => {
+          ap.assign.set(line.row, saved.id);
+          ap.status.set(line.row, 'manual');
+          renderMatch();
+        });
+      const row = el('div', { class: 'mrow' + (rec ? '' : ' needs') },
         el('div', { class: 'top' },
           el('div', {},
             el('div', {}, el('strong', {}, `${i + 1}. ${fmtDate(line.date)}`), ' ',
               el('span', { class: 'pill ' + (status === 'manual' ? 'ok' : status) }, STATUS_TEXT[status])),
             el('div', { class: 'place' }, line.place)),
           el('div', { class: 'amt' }, fmtMoney(line.cents))),
-        sel, detail));
+        sel, detail,
+        rec ? null : el('div', { class: 'drop-hint' }, 'Drop an invoice PDF or image here'));
+      enableDrop(row, async files => addForLine(await filesToPages(files)));
+      area.append(row);
     });
 
     const assigned = new Set(ap.assign.values());
