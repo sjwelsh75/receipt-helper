@@ -53,6 +53,8 @@
   let codes = [];
   let opts = { caption: true, placeholder: true };
   let lastCode = '';
+  let deletedIds = new Set(); // so a restore doesn't bring back receipts deleted here
+  let lastBackupAt = 0;       // phone: receipts made before this are on the computer
 
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const fmtMoney = cents => '$' + (cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -180,6 +182,12 @@
   }
   document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 
+  async function deleteReceipts(ids) {
+    for (const id of ids) { await DB.del('receipts', id); deletedIds.add(id); }
+    await DB.setKv('deletedIds', [...deletedIds]);
+    receipts = receipts.filter(r => !ids.includes(r.id));
+  }
+
   // ---------- receipts list ----------
   function receiptCard(r) {
     return el('button', { class: 'rcpt', onclick: () => openEditor(r) },
@@ -208,8 +216,17 @@
     $('#submitted-list').replaceChildren(...submitted.map(receiptCard));
   }
   $('#btn-submit-all').addEventListener('click', async () => {
-    const pending = receipts.filter(r => !r.submittedAt);
-    if (!confirm(`Mark all ${pending.length} waiting receipt(s) as submitted?
+    if (!lastBackupAt) { alert("You haven't saved a backup from this device yet, so none of these receipts are on your computer."); return; }
+    const all = receipts.filter(r => !r.submittedAt);
+    const pending = all.filter(r => r.created <= lastBackupAt);
+    const newer = all.length - pending.length;
+    if (!pending.length) { alert('All waiting receipts were added after your last backup, so they stay waiting.'); return; }
+    const when = new Date(lastBackupAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    if (!confirm(`Mark ${pending.length} receipt(s) from your last backup (${when}) as submitted?` +
+      (newer ? `
+
+${newer} receipt(s) added after that backup will stay waiting.` : '') +
+      `
 
 Use this after you've done month-end on your computer.`)) return;
     const now = Date.now();
@@ -220,8 +237,7 @@ Use this after you've done month-end on your computer.`)) return;
   $('#btn-clear-submitted').addEventListener('click', async () => {
     const sub = receipts.filter(r => r.submittedAt);
     if (!confirm(`Permanently delete ${sub.length} submitted receipt(s) from this phone?`)) return;
-    for (const r of sub) await DB.del('receipts', r.id);
-    receipts = receipts.filter(r => !r.submittedAt);
+    await deleteReceipts(sub.map(r => r.id));
     renderReceipts();
   });
 
@@ -307,8 +323,7 @@ Use this after you've done month-end on your computer.`)) return;
   });
   $('#ed-delete').addEventListener('click', async () => {
     if (!confirm('Delete this receipt?')) return;
-    await DB.del('receipts', ed.id);
-    receipts = receipts.filter(r => r.id !== ed.id);
+    await deleteReceipts([ed.id]);
     editor.close();
     renderReceipts();
     if (ap) renderMatch();
@@ -333,6 +348,7 @@ Use this after you've done month-end on your computer.`)) return;
       id: ed.id || uid(),
       created: existing ? existing.created : Date.now(),
       submittedAt: existing ? existing.submittedAt : null,
+      updated: Date.now(),
       cents,
       date: $('#ed-date').value,
       vendor: $('#ed-vendor').value.trim(),
@@ -428,7 +444,10 @@ Use this after you've done month-end on your computer.`)) return;
       zip.file('data.json', JSON.stringify({ version: 1, receipts: meta, codes, opts, lastCode }, null, 1));
       const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/zip' });
       busy();
+      const startedAt = Date.now();
       await shareOrDownload([new File([blob], `receipt-backup-${todayISO()}.zip`, { type: 'application/zip' })], 'Receipt backup');
+      lastBackupAt = startedAt;
+      await DB.setKv('lastBackupAt', lastBackupAt);
     } catch (err) {
       busy();
       if (err.name !== 'AbortError') alert('Backup failed: ' + err.message);
@@ -442,17 +461,23 @@ Use this after you've done month-end on your computer.`)) return;
     try {
       const zip = await JSZip.loadAsync(await readFile(f));
       const data = JSON.parse(await zip.file('data.json').async('string'));
+      const n = { added: 0, updated: 0, same: 0 };
       for (const r of data.receipts) {
-        r.files = await Promise.all(r.files.map(async p => ({ type: p.type, data: await zip.file(p.name).async('arraybuffer') })));
+        if (deletedIds.has(r.id)) continue;
         const here = receipts.find(x => x.id === r.id);
-        if (here && here.submittedAt && !r.submittedAt) r.submittedAt = here.submittedAt;
+        const stamp = x => x.updated || x.created || 0;
+        if (here && stamp(here) >= stamp(r)) { n.same++; continue; } // this device's copy is as new or newer
+        r.files = await Promise.all(r.files.map(async p => ({ type: p.type, data: await zip.file(p.name).async('arraybuffer') })));
+        // submitted / waiting is decided on this device once it has the receipt
+        if (here) r.submittedAt = here.submittedAt;
         await DB.put('receipts', r);
+        n[here ? 'updated' : 'added']++;
       }
       for (const c of data.codes || []) if (!codes.some(x => x.code === c.code && x.name === c.name)) codes.push(c);
       await saveCodes();
       receipts = await DB.all('receipts');
       renderReceipts();
-      toast(`Restored ${data.receipts.length} receipts`);
+      toast(`${n.added} new, ${n.updated} updated, ${n.same} already here`, 4000);
     } catch (err) {
       alert('Restore failed: ' + err.message);
     } finally { busy(); }
@@ -726,6 +751,8 @@ Use this after you've done month-end on your computer.`)) return;
     codes = await DB.getKv('codes', []);
     opts = Object.assign(opts, await DB.getKv('opts', {}));
     lastCode = await DB.getKv('lastCode', '');
+    deletedIds = new Set(await DB.getKv('deletedIds', []));
+    lastBackupAt = await DB.getKv('lastBackupAt', 0);
     $('#opt-caption').checked = opts.caption;
     $('#opt-placeholder').checked = opts.placeholder;
     renderReceipts();
