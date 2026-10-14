@@ -172,6 +172,60 @@
     return t;
   }
 
+  // ---------- full-screen receipt viewer ----------
+  const viewer = $('#viewer');
+  let pdfjs = null;
+  async function loadPdfJs() {
+    if (!pdfjs) {
+      pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.min.mjs');
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs';
+    }
+    return pdfjs;
+  }
+  async function openViewer(pages, title) {
+    if (!pages || !pages.length) return;
+    const body = $('#viewer-body');
+    body.replaceChildren();
+    body.classList.remove('zoomed');
+    $('#viewer-title').textContent = title || 'Receipt';
+    viewer.showModal();
+    const width = Math.min(body.clientWidth || window.innerWidth, 900);
+    for (const p of pages) {
+      if (p.type !== 'application/pdf') {
+        body.append(el('img', { src: pageUrl(p), alt: 'Receipt' }));
+        continue;
+      }
+      const holder = el('div', { class: 'viewer-msg' }, 'Loading PDF…');
+      body.append(holder);
+      try {
+        const lib = await loadPdfJs();
+        // pdf.js takes ownership of the buffer it's given, so hand it a copy
+        const doc = await lib.getDocument({ data: new Uint8Array(p.data.slice(0)) }).promise;
+        const canvases = [];
+        for (let n = 1; n <= doc.numPages; n++) {
+          const page = await doc.getPage(n);
+          const scale = (width * Math.min(window.devicePixelRatio || 1, 2) * 1.5) / page.getViewport({ scale: 1 }).width;
+          const vp = page.getViewport({ scale });
+          const canvas = el('canvas');
+          canvas.width = vp.width;
+          canvas.height = vp.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+          canvases.push(canvas);
+        }
+        holder.replaceWith(...canvases);
+      } catch (err) {
+        const url = URL.createObjectURL(new Blob([p.data], { type: 'application/pdf' }));
+        holder.replaceChildren("Couldn't show this PDF here. ",
+          el('a', { href: url, target: '_blank', rel: 'noopener' }, 'Open it in a new tab'));
+      }
+    }
+  }
+  $('#viewer-close').addEventListener('click', () => viewer.close());
+  $('#viewer-body').addEventListener('click', e => {
+    if (e.target.tagName === 'A') return;
+    e.currentTarget.classList.toggle('zoomed');
+  });
+
   // ---------- tabs ----------
   const titles = { receipts: 'Receipts', monthend: 'Month-end', settings: 'Settings' };
   function showTab(name) {
@@ -190,8 +244,13 @@
 
   // ---------- receipts list ----------
   function receiptCard(r) {
+    const thumb = thumbEl(r);
+    if (r.files && r.files.length) {
+      thumb.classList.add('viewable');
+      thumb.addEventListener('click', e => { e.stopPropagation(); openViewer(r.files, r.vendor || fmtMoney(r.cents)); });
+    }
     return el('button', { class: 'rcpt', onclick: () => openEditor(r) },
-      thumbEl(r),
+      thumb,
       el('div', { class: 'info' },
         el('div', { class: 'row1' }, el('span', {}, r.vendor || 'Receipt'), el('span', {}, fmtMoney(r.cents))),
         el('div', { class: 'row2' }, `${fmtDate(r.date)} · ${r.category} · ${r.code ? codeLabel(r.code) : 'no cost code'}`),
@@ -266,7 +325,9 @@ Use this after you've done month-end on your computer.`)) return;
       const d = el('div', { class: 'page' });
       if (p.type === 'application/pdf') d.textContent = 'PDF';
       else d.style.backgroundImage = `url("${pageUrl(p)}")`;
-      d.append(el('button', { type: 'button', class: 'rm', 'aria-label': 'Remove page', onclick: () => { ed.pages.splice(i, 1); renderPages(); } }, '×'));
+      d.classList.add('viewable');
+      d.addEventListener('click', () => openViewer(ed.pages, $('#ed-vendor').value || 'Receipt'));
+      d.append(el('button', { type: 'button', class: 'rm', 'aria-label': 'Remove page', onclick: e => { e.stopPropagation(); ed.pages.splice(i, 1); renderPages(); } }, '×'));
       return d;
     }));
     $('#ed-add-page-label').textContent = ed.pages.length ? '➕ Add another page' : '📷 Take photo / choose file';
@@ -608,6 +669,7 @@ Use this after you've done month-end on your computer.`)) return;
         const warn = rec.cents !== line.cents ? `Amount differs (${fmtMoney(rec.cents)}). ` : '';
         detail = el('div', { class: 'detail' + (warn ? ' warn' : '') },
           warn, `${rec.category} · ${rec.code ? codeLabel(rec.code) : 'NO COST CODE'} · ${rec.note || 'no note'} `,
+          rec.files.length ? el('button', { class: 'link', onclick: () => openViewer(rec.files, line.place) }, 'View') : null,
           el('button', { class: 'link', onclick: () => openEditor(rec, {}, () => renderMatch()) }, 'Edit'));
       }
       const addForLine = pages => openEditor(null,

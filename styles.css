@@ -182,3 +182,16 @@ dialog form { display: flex; flex-direction: column; height: 100%; }
 .mrow.dragover, dialog.dragover .dlg-body { outline: 3px dashed var(--accent); outline-offset: -3px; background: var(--accent-soft); }
 .mrow.dragover .drop-hint { border-color: var(--accent); color: var(--accent); }
 #btn-submit-all { margin-top: 14px; }
+
+/* receipt viewer */
+.viewable { cursor: zoom-in; }
+#viewer { display: none; flex-direction: column; background: #1c1c1e; color: #fff; }
+#viewer[open] { display: flex; }
+#viewer .dlg-head { background: #1c1c1e; border-color: #38383a; color: #fff; }
+#viewer .dlg-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+.viewer-body { flex: 1; overflow: auto; padding: 12px 12px calc(20px + var(--safe-b)); display: flex; flex-direction: column; align-items: center; gap: 12px; cursor: zoom-in; -webkit-overflow-scrolling: touch; }
+.viewer-body img, .viewer-body canvas { width: 100%; max-width: 900px; height: auto; background: #fff; border-radius: 4px; }
+.viewer-body.zoomed { align-items: flex-start; cursor: zoom-out; }
+.viewer-body.zoomed img, .viewer-body.zoomed canvas { width: 220%; max-width: none; }
+.viewer-msg { padding: 40px 10px; color: #ccc; text-align: center; }
+.viewer-msg a { color: #7fd4a8; }
