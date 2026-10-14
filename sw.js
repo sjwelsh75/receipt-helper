@@ -1,5 +1,5 @@
 // Offline support: app files come from the network when online, cache when offline.
-const CACHE = 'receipt-helper-v3';
+const CACHE = 'receipt-helper-v4';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'xlsx.js', 'manifest.webmanifest',
   'icon-180.png', 'icon-192.png', 'icon-512.png',

@@ -483,17 +483,28 @@ Use this after you've done month-end on your computer.`)) return;
     } finally { busy(); }
   });
 
-  async function shareOrDownload(files, title) {
-    if (navigator.canShare && navigator.canShare({ files })) {
-      await navigator.share({ files, title });
-      return;
-    }
-    for (const f of files) {
+  // Phones/tablets get the Share sheet; computers just save to Downloads
+  // (Windows browsers refuse to share some file types, e.g. .xlsx)
+  const isComputer = !navigator.maxTouchPoints && matchMedia('(pointer: fine)').matches;
+  function download(files) {
+    files.forEach((f, i) => setTimeout(() => {
       const a = el('a', { href: URL.createObjectURL(f), download: f.name });
       document.body.append(a);
       a.click();
       a.remove();
+    }, i * 400));
+  }
+  async function shareOrDownload(files, title) {
+    if (!isComputer && navigator.canShare && navigator.canShare({ files })) {
+      try {
+        await navigator.share({ files, title });
+        return;
+      } catch (err) {
+        if (err.name !== 'NotAllowedError') throw err;
+      }
     }
+    download(files);
+    if (isComputer) toast(files.length > 1 ? 'Saved to your Downloads folder' : `Saved ${files[0].name} to Downloads`, 4000);
   }
 
   // ---------- month-end ----------
@@ -722,9 +733,9 @@ Use this after you've done month-end on your computer.`)) return;
     };
     wrap.replaceChildren(
       el('p', { class: 'small' }, `✅ Ready: ${xlsxFile.name} and ${pdfFile.name} (${mb} MB).`),
-      el('button', { class: 'btn primary', onclick: () => share([xlsxFile, pdfFile]) }, 'Share both (Mail, Files…)'),
-      el('button', { class: 'btn', onclick: () => share([xlsxFile]) }, 'Share spreadsheet only'),
-      el('button', { class: 'btn', onclick: () => share([pdfFile]) }, 'Share PDF only'),
+      el('button', { class: 'btn primary', onclick: () => share([xlsxFile, pdfFile]) }, isComputer ? 'Download both' : 'Share both (Mail, Files…)'),
+      el('button', { class: 'btn', onclick: () => share([xlsxFile]) }, isComputer ? 'Download spreadsheet only' : 'Share spreadsheet only'),
+      el('button', { class: 'btn', onclick: () => share([pdfFile]) }, isComputer ? 'Download PDF only' : 'Share PDF only'),
       el('button', { class: 'btn', onclick: () => window.open(URL.createObjectURL(pdfFile), '_blank') }, 'Preview PDF'),
       el('button', {
         class: 'btn', onclick: async () => {
